@@ -1,0 +1,376 @@
+---
+title: "Analisis Korelasi Tugas Evdat"
+author: "Mario"
+date: "2026-05-16"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Dataset Real
+Nama  : expression in myeloid cells restrains murine norovirus-induced hepatitis and fibrosis
+GEO accesion : GSE326527
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(ggplot2)
+library(corrplot)
+library(pheatmap)
+library(RColorBrewer)
+```
+
+```{r}
+data <- read_csv("GSE326527_expression_data.csv")
+head(data)
+```
+
+## Mengambil kolom data ekspresi gen
+
+```{r}
+# Mengambil kolom liver saja
+data_liver <- data[, grep("^liver_", colnames(data))]
+head(data_liver)
+dim(data_liver)
+```
+
+## Eksplorasi Data
+```{r}
+
+sum(is.na(data_liver))
+
+# Statistik deskriptif per sampel
+sample_stats <- data.frame(
+  Sample = colnames(data_liver),
+  Total_Counts = colSums(data_liver),
+  Mean_Expression = colMeans(data_liver),
+  variance_Expresiion = apply(data_liver, 2, var),
+  Median_Expression = apply(data_liver, 2, median),
+  Genes_Detected = colSums(data_liver > 0),
+  Detection_Rate = round(colSums(data_liver > 0) / nrow(data_liver) * 100, 1)
+)
+
+print(sample_stats)
+
+```
+### Interpretasi Statistik Deskriptif
+Total Counts: Jumlah total ekspresi gen per sampel
+Mean Expression: Rata-rata ekspresi gen per sampel
+Median Expression: Nilai tengah ekspresi gen (robust terhadap outlier)
+Genes Detected: Jumlah gen yang memiliki ekspresi > 0
+Detection Rate: Persentase gen yang terdeteksi per sampel
+
+Kualitas data: Semua sampel memiliki detection rate yang baik (>50%)
+
+## Visualisasi Distribusi Data
+### Visualisasi Sebelum Transformasi
+
+```{r}
+# Mengubah data liver menjadi format long
+liver_long_raw <- data_liver %>%
+  rownames_to_column(var = "Gene") %>%
+  pivot_longer(
+    -Gene,
+    names_to = "Sample",
+    values_to = "Counts"
+  )
+
+# Membuat boxplot distribusi ekspresi gen per sampel raw
+boxplot_liver_raw <- ggplot(
+  liver_long_raw,
+  aes(x = Sample, y = Counts + 1, fill = Sample)
+) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  labs(
+    title = "Distribusi Ekspresi Gen Sampel Liver (Data Mentah)",
+    x = "Sampel",
+    y = "Raw Counts",
+    fill = "Sampel"
+  ) 
+ 
+print(boxplot_liver_raw)
+
+# Membuat histogram distribusi ekspresi gen raw
+
+histogram_liver_raw <- ggplot(
+  liver_long_raw,
+  aes(x = Counts + 1, fill = Sample)
+) +
+  geom_histogram(
+    bins = 50,
+    alpha = 0.7
+  ) +
+  facet_wrap(~Sample, scales = "free_y") +
+  theme_minimal() +
+  labs(
+    title = "Histogram Distribusi Ekspresi Gen Sampel Liver (Raw)",
+    x = "Raw Counts (log10 scale)",
+    y = "Frekuensi",
+    fill = "Sampel"
+  ) 
+
+print(histogram_liver_raw)
+```
+### Visualisasi Sesudah Transformasi
+```{r}
+# Transformasi log2
+data_log <- log2(data_liver + 1)
+
+# Mengubah data log transform menjadi format long
+liver_long_log <- data_log %>%
+  rownames_to_column(var = "Gene") %>%
+  pivot_longer(
+    -Gene,
+    names_to = "Sample",
+    values_to = "Log_Counts"
+  )
+
+# Membuat boxplot distribusi ekspresi gen per sampel setelah transformasi
+boxplot_liver_log <- ggplot(
+  liver_long_log,
+  aes(x = Sample, y = Log_Counts, fill = Sample)
+) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) +
+  labs(
+    title = "Distribusi Ekspresi Gen Sampel Liver (Log2 Transformed)",
+    x = "Sampel",
+    y = "Log2(Counts + 1)",
+    fill = "Sampel"
+  )
+
+print(boxplot_liver_log)
+
+# Membuat histogram distribusi ekspresi gen setelah transformasi
+histogram_liver_log <- ggplot(
+  liver_long_log,
+  aes(x = Log_Counts, fill = Sample)
+) +
+  geom_histogram() +
+  facet_wrap(~Sample, scales = "free_y") +
+  theme_minimal() +
+  theme(
+    panel.spacing = unit(2, "lines"),
+    axis.text.x = element_text(size = 8),
+    strip.text = element_text(size = 11, face = "bold"),
+    legend.position = "right"
+  ) +
+  labs(
+    title = "Histogram Distribusi Ekspresi Gen Sampel Liver Setelah Log2 Transformasi",
+    x = "Log2(Counts + 1)",
+    y = "Frekuensi",
+    fill = "Sampel"
+  )
+
+print(histogram_liver_log)
+```
+
+## Analisis Korelasi Gen
+
+```{r}
+gene_filter <- rowSums(data_liver > 10) >= 3
+data_filtered <- data_liver[gene_filter, ]
+
+nrow(data_filtered)
+
+cat("Gen terfilter:", nrow(data_filtered), "dari", nrow(data_liver), "\n")
+```
+### Visualisasi Korelasi Pearson
+```{r}
+# Hitung matriks korelasi antar sampel
+cor_pearson <- cor(data_filtered, method = "pearson")
+
+
+# Visualisasi korelasi Pearson
+corrplot(cor_pearson, method = "color", type = "upper",
+         tl.col = "black", tl.srt = 45,
+         addCoef.col = "black", number.cex = 0.8,
+         col = colorRampPalette(c("blue", "white", "red"))(100),
+         mar = c(0,0,1,0),
+         main = "Korelasi Sampel (Pearson)")
+```
+
+### Visualisasi Korelasi Spearman dengan Clustering
+```{r}
+cor_spearman <- cor(data_filtered, method = "spearman")
+
+pheatmap(cor_spearman,
+         color = colorRampPalette(c("blue", "white", "red"))(100),
+         cluster_rows = TRUE, cluster_cols = TRUE,
+         display_numbers = TRUE, number_format = "%.2f",
+         main = "Korelasi Sampel (Spearman) + Clustering",
+         fontsize_number = 8)
+
+```
+```{r network_ggplot, message=FALSE, warning=FALSE}
+# =========================================================
+# NETWORK ANALYSIS GEN EKSPRESI
+# =========================================================
+
+# 1. Menggunakan data hasil log transform
+data_network <- log2(data_filtered + 1)
+
+# 2. Menghitung varians setiap gen
+gene_variances <- apply(data_network, 1, var)
+
+# 3. Mengambil Top 15 gen dengan varians tertinggi
+top_15_indices <- order(gene_variances, decreasing = TRUE)[1:15]
+
+data_top_genes <- data_network[top_15_indices, ]
+
+# 4. Menghitung korelasi antar gen
+cor_matrix_genes <- cor(
+  t(data_top_genes),
+  method = "pearson"
+)
+
+# Menghilangkan self-correlation
+diag(cor_matrix_genes) <- 0
+
+# 5. Threshold korelasi kuat
+threshold <- 0.75
+
+cor_matrix_genes[
+  abs(cor_matrix_genes) < threshold
+] <- 0
+
+# 6. Mengubah matriks korelasi menjadi edge list
+edges <- as.data.frame(cor_matrix_genes) %>%
+  rownames_to_column(var = "from") %>%
+  pivot_longer(
+    -from,
+    names_to = "to",
+    values_to = "weight"
+  ) %>%
+  filter(weight != 0) %>%
+  filter(from != to)
+
+# Menghapus duplikasi edge
+edges <- edges %>%
+  mutate(pair = paste0(pmin(from, to), "_", pmax(from, to))) %>%
+  distinct(pair, .keep_all = TRUE)
+
+# 7. Membuat koordinat node melingkar
+unique_nodes <- unique(c(edges$from, edges$to))
+
+n_nodes <- length(unique_nodes)
+
+angles <- seq(
+  0,
+  2 * pi,
+  length.out = n_nodes + 1
+)[1:n_nodes]
+
+nodes_coords <- data.frame(
+  node = unique_nodes,
+  x = cos(angles),
+  y = sin(angles),
+  stringsAsFactors = FALSE
+)
+
+# 8. Menggabungkan koordinat edge
+edges_coords <- edges %>%
+  left_join(
+    nodes_coords,
+    by = c("from" = "node")
+  ) %>%
+  rename(x1 = x, y1 = y) %>%
+  left_join(
+    nodes_coords,
+    by = c("to" = "node")
+  ) %>%
+  rename(x2 = x, y2 = y)
+
+# 9. Visualisasi network
+plot_network_pure <- ggplot() +
+
+  # Edge
+  geom_segment(
+    data = edges_coords,
+    aes(
+      x = x1,
+      y = y1,
+      xend = x2,
+      yend = y2,
+      color = weight > 0,
+      size = abs(weight)
+    ),
+    alpha = 0.7
+  ) +
+
+  # Node
+  geom_point(
+    data = nodes_coords,
+    aes(x = x, y = y),
+    size = 5,
+    color = "#2c3e50"
+  ) +
+
+  # Label gen
+  geom_text(
+    data = nodes_coords,
+    aes(
+      x = x * 1.15,
+      y = y * 1.15,
+      label = paste0("gene_",node)
+    ),
+    size = 3.5,
+    fontface = "bold"
+  ) +
+
+  scale_color_manual(
+    values = c(
+      "TRUE" = "steelblue",
+      "FALSE" = "indianred"
+    ),
+    labels = c(
+      "TRUE" = "Positif",
+      "FALSE" = "Negatif"
+    ),
+    name = "Arah Korelasi"
+  ) +
+
+  scale_size_continuous(
+    range = c(0.5, 2.5),
+    guide = "none"
+  ) +
+
+  theme_void() +
+
+  xlim(-1.4, 1.4) +
+  ylim(-1.4, 1.4) +
+
+  labs(
+    title = "Jaringan Korelasi Gen Liver",
+    subtitle = paste(
+      "Top 15 Gen dengan Varians Tertinggi | Threshold Pearson >",
+      threshold
+    ),
+    caption = "Biru = Korelasi Positif | Merah = Korelasi Negatif"
+  ) +
+
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(
+      face = "bold",
+      size = 15,
+      hjust = 0.5
+    ),
+    plot.subtitle = element_text(
+      hjust = 0.5
+    )
+  )
+
+print(plot_network_pure)
+```
+
